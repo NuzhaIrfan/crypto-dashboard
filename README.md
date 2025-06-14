@@ -43,7 +43,7 @@ Open http://localhost:3000 in your browser
 Deployment 🌐
 Deploy to Vercel with one click:
 
-https://vercel.com/button
+https://crypto-dash-flax.vercel.app/
 
 Or deploy manually:
 
@@ -79,14 +79,7 @@ Extend Time Period:
 
 Change the days=7 parameter in the CoinGecko API call
 
-Future Improvements 🔮
-Add user portfolio tracking
 
-Implement price alerts
-
-Add more chart types (candlestick, etc.)
-
-Support for more exchanges
 
 Contributing 🤝
 Contributions are welcome! Please open an issue or submit a pull request.
