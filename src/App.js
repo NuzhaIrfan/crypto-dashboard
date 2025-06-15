@@ -1,11 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Chart } from 'react-chartjs-2';
-import { Chart as ChartJS, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend } from 'chart.js';
+import { 
+  Chart as ChartJS, 
+  LineController,
+  LineElement, 
+  PointElement, 
+  LinearScale, 
+  CategoryScale,
+  Tooltip, 
+  Legend 
+} from 'chart.js';
 import { w3cwebsocket as W3CWebSocket } from 'websocket';
 
 // Register Chart.js components
-ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
+ChartJS.register(
+  LineController,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
+);
 
 export default function App() {
   const [cryptoData, setCryptoData] = useState([]);
@@ -15,42 +32,56 @@ export default function App() {
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [darkMode, setDarkMode] = useState(false);
+  const [usingWebSocket, setUsingWebSocket] = useState(true);
   const ws = useRef(null);
+  const apiPollInterval = useRef(null);
 
-  // Initialize WebSocket connection
+  // Initialize WebSocket connection with fallback to polling
   useEffect(() => {
-    ws.current = new W3CWebSocket('wss://ws.coincap.io/prices?assets=bitcoin,ethereum');
+    const connectWebSocket = () => {
+      ws.current = new W3CWebSocket('wss://ws.coincap.io/prices?assets=bitcoin,ethereum');
 
-    ws.current.onopen = () => {
-      console.log('WebSocket connected');
+      ws.current.onopen = () => {
+        console.log('WebSocket connected');
+        setUsingWebSocket(true);
+        if (apiPollInterval.current) {
+          clearInterval(apiPollInterval.current);
+          apiPollInterval.current = null;
+        }
+      };
+
+      ws.current.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          setCryptoData(prev => prev.map(crypto => ({
+            ...crypto,
+            current_price: data[crypto.id] || crypto.current_price
+          })));
+        } catch (err) {
+          console.error('Error parsing WebSocket message:', err);
+        }
+      };
+
+      ws.current.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        fallbackToPolling();
+      };
+
+      ws.current.onclose = () => {
+        console.log('WebSocket closed');
+        fallbackToPolling();
+      };
     };
 
-    ws.current.onmessage = (msg) => {
-      try {
-        const data = JSON.parse(msg.data);
-        setCryptoData(prev => prev.map(crypto => ({
-          ...crypto,
-          current_price: data[crypto.id] || crypto.current_price
-        })));
-      } catch (err) {
-        console.error('Error parsing WebSocket message:', err);
+    const fallbackToPolling = () => {
+      setUsingWebSocket(false);
+      if (!apiPollInterval.current) {
+        fetchApiData();
+        apiPollInterval.current = setInterval(fetchApiData, 30000); // 30 seconds
       }
     };
 
-    ws.current.onerror = (err) => {
-      console.error('WebSocket error:', err);
-    };
-
-    return () => {
-      if (ws.current) {
-        ws.current.close();
-      }
-    };
-  }, []);
-
-  // Fetch initial crypto data
-  useEffect(() => {
-    const fetchData = async () => {
+    const fetchApiData = async () => {
       try {
         const response = await axios.get(
           'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&order=market_cap_desc'
@@ -59,43 +90,52 @@ export default function App() {
         setFilteredData(response.data);
         setLoading(false);
       } catch (err) {
+        console.error('API fetch error:', err);
         setError('Failed to fetch data. Please try again later.');
         setLoading(false);
       }
     };
-    fetchData();
+
+    connectWebSocket();
+    fetchChartData();
+
+    return () => {
+      if (ws.current) {
+        ws.current.close();
+      }
+      if (apiPollInterval.current) {
+        clearInterval(apiPollInterval.current);
+      }
+    };
   }, []);
 
   // Fetch historical data for chart
-  useEffect(() => {
-    const fetchChartData = async () => {
-      try {
-        const response = await axios.get(
-          'https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=7'
-        );
-        const prices = response.data.prices.map(price => price[1]);
-        const labels = response.data.prices.map(price =>
-          new Date(price[0]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        );
+  const fetchChartData = async () => {
+    try {
+      const response = await axios.get(
+        'https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=7'
+      );
+      const prices = response.data.prices.map(price => price[1]);
+      const labels = response.data.prices.map(price =>
+        new Date(price[0]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      );
 
-        setChartData({
-          labels,
-          datasets: [{
-            label: 'Bitcoin Price (Last 7 Days)',
-            data: prices,
-            borderColor: darkMode ? '#3b82f6' : '#2563eb',
-            backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.1)' : 'rgba(37, 99, 235, 0.1)',
-            tension: 0.4,
-            pointRadius: 3,
-            pointBackgroundColor: darkMode ? '#3b82f6' : '#2563eb',
-          }],
-        });
-      } catch (err) {
-        console.error('Error fetching chart data:', err);
-      }
-    };
-    fetchChartData();
-  }, [darkMode]);
+      setChartData({
+        labels,
+        datasets: [{
+          label: 'Bitcoin Price (Last 7 Days)',
+          data: prices,
+          borderColor: darkMode ? '#3b82f6' : '#2563eb',
+          backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.1)' : 'rgba(37, 99, 235, 0.1)',
+          tension: 0.4,
+          pointRadius: 3,
+          pointBackgroundColor: darkMode ? '#3b82f6' : '#2563eb',
+        }],
+      });
+    } catch (err) {
+      console.error('Error fetching chart data:', err);
+    }
+  };
 
   // Filter crypto data based on search term
   useEffect(() => {
@@ -105,6 +145,13 @@ export default function App() {
     );
     setFilteredData(filtered);
   }, [searchTerm, cryptoData]);
+
+  // Reconnect WebSocket when dark mode changes (if using WebSocket)
+  useEffect(() => {
+    if (usingWebSocket && ws.current) {
+      fetchChartData();
+    }
+  }, [darkMode, usingWebSocket]);
 
   if (loading) {
     return (
@@ -136,11 +183,16 @@ export default function App() {
   return (
     <div className={`min-h-screen transition-colors duration-300 ${darkMode ? 'bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-800'}`}>
       <div className="max-w-6xl mx-auto p-4 md:p-8">
-        {/* Header with Dark Mode Toggle */}
+        {/* Header with Dark Mode Toggle and Connection Status */}
         <header className="mb-8 flex justify-between items-center">
           <div>
             <h1 className="text-3xl md:text-4xl font-bold">Crypto Dashboard</h1>
-            <p className={`mt-2 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Real-time cryptocurrency prices & trends</p>
+            <p className={`mt-2 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+              Real-time cryptocurrency prices & trends
+              <span className={`ml-2 text-xs px-2 py-1 rounded-full ${usingWebSocket ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                {usingWebSocket ? 'Live' : 'Polling'}
+              </span>
+            </p>
           </div>
           <button
             onClick={() => setDarkMode(!darkMode)}
@@ -180,16 +232,16 @@ export default function App() {
               </div>
               <div className="space-y-2">
                 <p>
-                  <span className="font-semibold">Price:</span> ${crypto.current_price.toLocaleString()}
+                  <span className="font-semibold">Price:</span> ${crypto.current_price?.toLocaleString() || 'N/A'}
                 </p>
                 <p>
                   <span className="font-semibold">24h Change:</span>{' '}
                   <span className={crypto.price_change_percentage_24h >= 0 ? 'text-green-500' : 'text-red-500'}>
-                    {crypto.price_change_percentage_24h.toFixed(2)}%
+                    {crypto.price_change_percentage_24h?.toFixed(2) || 'N/A'}%
                   </span>
                 </p>
                 <p>
-                  <span className="font-semibold">Market Cap:</span> ${crypto.market_cap.toLocaleString()}
+                  <span className="font-semibold">Market Cap:</span> ${crypto.market_cap?.toLocaleString() || 'N/A'}
                 </p>
               </div>
             </div>
@@ -267,6 +319,13 @@ export default function App() {
             </a>
           </p>
           <p className="mt-2">Built with React, Chart.js, and Tailwind CSS</p>
+          <p className="mt-1 text-xs">
+            Connection: {usingWebSocket ? (
+              <span className="text-green-500">WebSocket (Live)</span>
+            ) : (
+              <span className="text-yellow-500">HTTP Polling (30s)</span>
+            )}
+          </p>
         </footer>
       </div>
     </div>
